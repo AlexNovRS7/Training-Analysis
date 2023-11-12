@@ -87,6 +87,7 @@ def save_to_csv(data, filename):
 
 
 def get_power_stream(activity_id):
+    logging.info(f"Downloading power for {activity_id}")
     while True:
         stream_response = session.get(f"https://www.strava.com/api/v3/activities/{activity_id}/streams/watts?access_token={ACCESS_TOKEN}") 
         stream_json = json.loads(stream_response.text)
@@ -133,7 +134,16 @@ all_cycling_activities.extend(new_cycling_activities)
 logging.info(f"Stacked both files. Activities in sum {len(all_cycling_activities)}")
 
 # download power streams
-#TODO
+for activity in all_cycling_activities:
+    if "Ride" in activity["type"]:
+        value = activity.get("power_stream", None)
+        if value is None:
+            activity["power_stream"] = get_power_stream(activity["id"])
+
+#save new information to json
+with open('activities.json', 'w') as activities_file:
+    json.dump(all_cycling_activities, activities_file)
+logging.info("JSON file updated")
 
 df = pd.DataFrame(all_cycling_activities)
 df = df.loc[(df["type"].str.contains("Ride"))]
@@ -169,3 +179,4 @@ df["TSB"] = df["CTL"] - df["ATL"]
 logging.info("TSB calculated")
 
 save_to_csv(df, 'cycling_activities.csv')
+logging.info("File Saved")
