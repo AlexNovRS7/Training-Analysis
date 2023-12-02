@@ -70,45 +70,33 @@ def get_all_cycling_activities(access_token, after):
     return all_activities
 
 
-def save_to_csv(data, filename):
-    if not data:
-        print("No data to save.")
-        return
-    
-    # Extract all unique keys from all activities
-    fields = set().union(*(d.keys() for d in data))
-    
-    with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fields)
-        
-        # Write the header
-        writer.writeheader()
-        
-        # Write the data
-        writer.writerows(data)
-
-
 def get_power_stream(activity_id):
     print(f"Downloading power for {activity_id}")
     while True:
         stream_response = session.get(f"https://www.strava.com/api/v3/activities/{activity_id}/streams/watts?access_token={ACCESS_TOKEN}") 
+        print(f"Sent get request for {activity_id}")
         stream_json = json.loads(stream_response.text)
         for stream in stream_json:
             try:
                 if stream["type"] == "watts":
                     return stream["data"]
+                else:
+                    break
             except TypeError:
-                print("Rate limit exceeded, waiting for a minute")
-                print(stream_response.text)
-                time.sleep(60)
+                print("Rate limit exceeded, waiting for 7 minutes")
+                print(stream_json)
+                time.sleep(420)
 
 
 def calculate_np(power_stream):
-    watts_df = pd.DataFrame(power_stream, columns=["Wats"])
-    watts_df["30s rolling w"] = watts_df["Wats"].rolling(30, 0).mean() ** 4
+    if power_stream is not np.nan:
+        watts_df = pd.DataFrame(power_stream, columns=["Wats"])
+        watts_df["30s rolling w"] = watts_df["Wats"].rolling(30, 0).mean() ** 4
 
-    avg_powered_values = watts_df["30s rolling w"].mean()
-    return avg_powered_values ** 0.25
+        avg_powered_values = watts_df["30s rolling w"].mean()
+        return avg_powered_values ** 0.25
+    else:
+        return None
 
 
 with open('secrets.json') as secrets_file:
@@ -137,8 +125,9 @@ all_cycling_activities.extend(new_cycling_activities)
 print(f"Stacked both files. Activities in sum {len(all_cycling_activities)}")
 
 # download power streams
+n = len(all_cycling_activities)
 for activity in all_cycling_activities:
-    if "Ride" in activity["type"]:
+    if "Ride" in activity["type"] and activity.get("device_watts", False) == True:
         value = activity.get("power_stream", None)
         if value is None:
             activity["power_stream"] = get_power_stream(activity["id"])
@@ -149,10 +138,16 @@ with open('activities.json', 'w') as activities_file:
 print("JSON file updated")
 
 df = pd.DataFrame(all_cycling_activities)
-df = df.loc[(df["type"].str.contains("Ride"))]
+df = df.loc[(df["type"].str.contains("Ride")) & (df["device_watts"]==True)]
 df["start_date"] = pd.to_datetime(df["start_date"])
 df["start_date"] = df["start_date"].dt.tz_localize(None).dt.date
 df.sort_values("start_date", inplace=True)
+
+#zero fill
+r = pd.date_range(df["start_date"].min(), datetime.datetime.today().date(), freq='D')
+df = df.groupby("start_date").sum()
+df = df.reindex(r).reset_index()
+print("Zero filled")
 
 ftp_df = pd.read_csv('ATP - FTP.csv')
 ftp_df["Date"] = pd.to_datetime(ftp_df["Date"], format="%d/%m/%Y").dt.date
@@ -163,7 +158,9 @@ df["FTP set"] = df["Power"].ffill()
 df.drop(["Date", "Power"], axis=1, inplace=True)
 print("Activities and FTP dataframes merged")
 
-df["NP"] = df["power stream"].apply(lambda x: calculate_np(x))
+
+
+df["NP"] = df["power_stream"].apply(lambda x: calculate_np(x))
 print("NP calculated")
 
 df["IF"] = df["NP"]/df["FTP set"]
@@ -175,11 +172,11 @@ print("TSS calculated")
 df["CTL"] = df["TSS"].rolling(42,0).mean().shift(1)
 print("CTL calculated")
 
-df["ATL"] = df["TSS"].rolling(77,0).mean().shift(1)
+df["ATL"] = df["TSS"].rolling(7,0).mean().shift(1)
 print("ATL calculated")
 
 df["TSB"] = df["CTL"] - df["ATL"]
 print("TSB calculated")
 
-save_to_csv(df, 'cycling_activities.csv')
+df.to_csv('cycling_activities.csv')
 print("File Saved")
