@@ -19,7 +19,9 @@ with open('secrets.json') as secrets_file:
 garmin = garminconnect.Garmin(login, password)
 garmin.login()
 
+df = pd.DataFrame(
+    garmin.get_activities_by_date("2023-01-01", date.today().isoformat())
+)
 
-garmin_activities = garmin.get_activities_by_date("2023-01-01", date.today().isoformat())
-
-print(len(garmin_activities))
+# activity type provided as json, extract only one neccesary value
+df["activityType"] = df['activityType'].apply(lambda x: x['typeKey'])
